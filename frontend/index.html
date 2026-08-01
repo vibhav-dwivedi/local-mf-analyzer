@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mutual Fund Analyzer</title>
+    <meta name="description" content="Analyze your KFintech/myCAMS CAS PDF privately — all processing happens locally.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <!-- ░░░ UPLOAD SCREEN ░░░ -->
+    <div id="upload-screen">
+        <div class="upload-center">
+            <div class="hero-glyph">📊</div>
+            <h1>Mutual Fund Analyzer</h1>
+            <p class="lead">Upload your KFintech&nbsp;/&nbsp;myCAMS Consolidated Account Statement.<br>Everything is
+                processed <strong>locally</strong> — nothing leaves your device.</p>
+            <form id="upload-form" class="upload-card">
+                <div class="form-group">
+                    <label>CAS PDF Statement</label>
+                    <div class="file-zone" id="file-zone">
+                        <svg width="32" height="32" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                            stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round"
+                                d="M12 16v-8m0 0-3 3m3-3 3 3M4.75 17.25A3.25 3.25 0 0 0 8 20.5h8a3.25 3.25 0 0 0 3.25-3.25V9.664a3.25 3.25 0 0 0-.952-2.298L15.634 4.7A3.25 3.25 0 0 0 13.336 3.75H8A3.25 3.25 0 0 0 4.75 7v10.25Z" />
+                        </svg>
+                        <span id="file-label">Click to select or drag & drop your PDF</span>
+                        <input type="file" id="cas-file" accept="application/pdf" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>PDF Password <small>(usually PAN in lowercase, e.g. aabcp1234a)</small></label>
+                    <input type="password" id="cas-password" placeholder="Enter PDF password" autocomplete="off"
+                        required>
+                </div>
+                <button type="submit" id="submit-btn">
+                    <span id="btn-text">Analyze My Portfolio</span>
+                    <span id="btn-loader" class="hidden"></span>
+                </button>
+                <p id="upload-error" class="upload-error hidden"></p>
+            </form>
+            <p class="privacy">🔒 Your PDF is read in memory only — never written to disk.</p>
+            <button id="theme-toggle-upload" class="theme-toggle" aria-label="Toggle theme" style="position:fixed;top:1rem;right:1rem;">🌙</button>
+        </div>
+    </div>
+
+    <!-- ░░░ DASHBOARD SCREEN ░░░ -->
+    <div id="dashboard-screen" class="hidden">
+
+        <nav class="topbar">
+            <span class="brand">📊 MF Analyzer</span>
+            <div class="tab-bar">
+                <button class="tab-btn active" data-tab="tab-overview">Overview</button>
+                <button class="tab-btn" data-tab="tab-insights">Insights</button>
+            </div>
+            <div style="display:flex;align-items:center;gap:.5rem;">
+                <button id="theme-toggle-dash" class="theme-toggle" aria-label="Toggle theme">🌙</button>
+                <button id="reset-btn" class="btn-ghost">⬅ Upload Another</button>
+            </div>
+        </nav>
+
+        <!-- ════════ TAB: OVERVIEW ════════ -->
+        <div id="tab-overview" class="tab-content active">
+
+            <!-- SUMMARY ROW -->
+            <div class="section">
+                <div class="cards-row" id="summary-cards">
+                    <div class="kpi-card" data-key="total_invested">
+                        <div class="kpi-label">Total Invested</div>
+                        <div class="kpi-val" id="k-invested">—</div>
+                    </div>
+                    <div class="kpi-card highlight">
+                        <div class="kpi-label">Current Value</div>
+                        <div class="kpi-val" id="k-current">—</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Total Gains</div>
+                        <div class="kpi-val" id="k-gains">—</div>
+                        <div class="kpi-sub" id="k-abs">—</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Overall XIRR</div>
+                        <div class="kpi-val" id="k-xirr">—</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Total Withdrawn</div>
+                        <div class="kpi-val muted" id="k-withdrawn">—</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Dividends Earned</div>
+                        <div class="kpi-val" id="k-dividends">—</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Active Funds</div>
+                        <div class="kpi-val" id="k-funds">—</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Years Investing</div>
+                        <div class="kpi-val" id="k-years">—</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">SIP Investment</div>
+                        <div class="kpi-val" id="k-sip" style="color:var(--green)">—</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Lumpsum Investment</div>
+                        <div class="kpi-val" id="k-lumpsum" style="color:var(--accent-lt)">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- YEAR TABLE -->
+            <div class="section">
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>Year-wise Summary <span class="hint-tag">Click a row to see transactions</span></h2>
+                    </div>
+                    <div class="table-scroll">
+                        <table id="year-table">
+                            <thead>
+                                <tr>
+                                    <th>Financial Year</th>
+                                    <th class="num">Invested</th>
+                                    <th class="num">Withdrawn</th>
+                                    <th class="num">Dividends</th>
+                                    <th class="num">Net Flow</th>
+                                    <th class="num">Cumulative Invested</th>
+                                    <th class="num">Transactions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="year-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CHARTS ROW 1 -->
+            <div class="section charts-grid two-col">
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>Year-wise Investment vs Withdrawal</h2>
+                    </div>
+                    <div class="chart-box"><canvas id="ch-yearly"></canvas></div>
+                </div>
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>Cumulative Net Invested Over Time</h2>
+                    </div>
+                    <div class="chart-box"><canvas id="ch-cumul"></canvas></div>
+                </div>
+            </div>
+
+            <!-- CHARTS ROW 2 -->
+            <div class="section charts-grid two-col">
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>Portfolio Allocation (Current Value)</h2>
+                    </div>
+                    <div class="chart-box donut-box"><canvas id="ch-alloc"></canvas></div>
+                </div>
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>Fund-wise XIRR %</h2>
+                    </div>
+                    <div class="chart-box"><canvas id="ch-fxirr"></canvas></div>
+                </div>
+            </div>
+
+            <!-- FUND TABLE -->
+            <div class="section">
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>Fund-wise Breakdown <span class="hint-tag">Click a row to see Year-on-Year details</span></h2>
+                    </div>
+                    <div class="table-scroll">
+                        <table id="fund-table">
+                            <thead>
+                                <tr>
+                                    <th>Fund Name</th>
+                                    <th class="num">Invested</th>
+                                    <th class="num">Current Value</th>
+                                    <th class="num">Gain / Loss</th>
+                                    <th class="num">Abs Return %</th>
+                                    <th class="num">XIRR %</th>
+                                </tr>
+                            </thead>
+                            <tbody id="fund-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /tab-overview -->
+
+        <!-- ════════ TAB: INSIGHTS ════════ -->
+        <div id="tab-insights" class="tab-content">
+
+            <!-- TOP PERFORMERS -->
+            <div class="section">
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>🏆 Top Performing Funds <span class="hint-tag">by XIRR</span></h2>
+                    </div>
+                    <div class="table-scroll">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Fund</th>
+                                    <th class="num">Invested</th>
+                                    <th class="num">Current</th>
+                                    <th class="num">Gain</th>
+                                    <th class="num">XIRR %</th>
+                                </tr>
+                            </thead>
+                            <tbody id="top-performers"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- BOTTOM PERFORMERS -->
+            <div class="section">
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>📉 Underperforming Funds <span class="hint-tag">needs attention</span></h2>
+                    </div>
+                    <div class="table-scroll">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Fund</th>
+                                    <th class="num">Invested</th>
+                                    <th class="num">Current</th>
+                                    <th class="num">Gain</th>
+                                    <th class="num">XIRR %</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bottom-performers"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CHARTS ROW -->
+            <div class="section charts-grid two-col">
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>📊 Concentration Risk</h2>
+                    </div>
+                    <div class="chart-box donut-box"><canvas id="ch-concentration"></canvas></div>
+                </div>
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>🏢 AMC Diversification</h2>
+                    </div>
+                    <div class="chart-box donut-box"><canvas id="ch-amc"></canvas></div>
+                </div>
+            </div>
+
+            <!-- SIP vs LUMPSUM + FUND CATEGORIES -->
+            <div class="section charts-grid two-col">
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>💰 SIP vs Lumpsum <span class="hint-tag">year-wise breakdown</span></h2>
+                    </div>
+                    <div class="chart-box"><canvas id="ch-siplump"></canvas></div>
+                </div>
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>🏷️ Fund Category Allocation</h2>
+                    </div>
+                    <div id="category-summary" class="category-summary"></div>
+                    <div class="chart-box donut-box"><canvas id="ch-categories"></canvas></div>
+                </div>
+            </div>
+
+            <!-- INVESTMENT HEATMAP -->
+            <div class="section">
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>📅 Investment Consistency</h2>
+                    </div>
+                    <div id="consistency-grid" class="consistency-grid"></div>
+                </div>
+            </div>
+
+            <!-- DORMANT FUNDS -->
+            <div class="section">
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>💤 Dormant / Zero-Value Funds <span class="hint-tag">fully redeemed or zero balance</span>
+                        </h2>
+                    </div>
+                    <div class="table-scroll">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Fund</th>
+                                    <th class="num">Invested</th>
+                                    <th class="num">Amount Out</th>
+                                    <th>Status</th>
+                                    <th class="num">Realized P&L</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dormant-funds"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PORTFOLIO HEALTH -->
+            <div class="section">
+                <div class="panel">
+                    <div class="panel-head">
+                        <h2>🩺 Portfolio Health Check</h2>
+                    </div>
+                    <div id="health-cards" class="health-cards"></div>
+                </div>
+            </div>
+
+        </div><!-- /tab-insights -->
+
+    </div><!-- /dashboard -->
+
+    <!-- ░░░ DRILL-DOWN MODAL ░░░ -->
+    <div id="modal-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true">
+        <div class="modal">
+            <div class="modal-head">
+                <h2 id="modal-title">Transactions</h2>
+                <button id="modal-close" aria-label="Close">✕</button>
+            </div>
+            <div class="modal-summary" id="modal-summary"></div>
+            <div class="table-scroll">
+                <table id="modal-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Fund</th>
+                            <th>Type</th>
+                            <th class="num">Amount</th>
+                            <th class="num">Units</th>
+                            <th class="num">NAV</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modal-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
