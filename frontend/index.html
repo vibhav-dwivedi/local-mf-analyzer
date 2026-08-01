@@ -5,7 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mutual Fund Analyzer</title>
-    <meta name="description" content="Analyze your KFintech/myCAMS CAS PDF privately — all processing happens locally.">
+    <meta name="description"
+        content="Analyze your KFintech/myCAMS CAS PDF privately — all processing happens locally in your browser.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
@@ -14,13 +15,44 @@
 
 <body>
 
+    <!-- ░░░ PYODIDE LOADING OVERLAY ░░░ -->
+    <div id="pyodide-loading" class="pyodide-overlay">
+        <div class="pyodide-loader">
+            <div class="hero-glyph">📊</div>
+            <h1>Mutual Fund Analyzer</h1>
+            <p class="lead">Loading Python runtime in your browser…</p>
+            <div class="progress-bar-track">
+                <div class="progress-bar-fill" id="pyodide-progress" style="width: 0%"></div>
+            </div>
+            <p class="pyodide-stage" id="pyodide-stage">Initializing…</p>
+            <p class="privacy" style="margin-top: 2rem;">🔒 Everything runs locally — no server, no data leaves your
+                device.</p>
+        </div>
+    </div>
+
     <!-- ░░░ UPLOAD SCREEN ░░░ -->
-    <div id="upload-screen">
+    <div id="upload-screen" class="hidden">
         <div class="upload-center">
             <div class="hero-glyph">📊</div>
             <h1>Mutual Fund Analyzer</h1>
             <p class="lead">Upload your KFintech&nbsp;/&nbsp;myCAMS Consolidated Account Statement.<br>Everything is
                 processed <strong>locally</strong> — nothing leaves your device.</p>
+
+            <!-- Previous session banner -->
+            <div id="prev-session" class="prev-session hidden">
+                <div class="prev-session-info">
+                    <span class="prev-icon">📁</span>
+                    <div>
+                        <strong>Previous analysis found</strong>
+                        <span id="prev-session-date" class="prev-date"></span>
+                    </div>
+                </div>
+                <div class="prev-session-actions">
+                    <button id="load-prev-btn" class="btn-accent-sm">Load Previous</button>
+                    <button id="dismiss-prev-btn" class="btn-ghost-sm">Dismiss</button>
+                </div>
+            </div>
+
             <form id="upload-form" class="upload-card">
                 <div class="form-group">
                     <label>CAS PDF Statement</label>
@@ -45,8 +77,9 @@
                 </button>
                 <p id="upload-error" class="upload-error hidden"></p>
             </form>
-            <p class="privacy">🔒 Your PDF is read in memory only — never written to disk.</p>
-            <button id="theme-toggle-upload" class="theme-toggle" aria-label="Toggle theme" style="position:fixed;top:1rem;right:1rem;">🌙</button>
+            <p class="privacy">🔒 Your PDF is read in memory only — never written to disk or sent to any server.</p>
+            <button id="theme-toggle-upload" class="theme-toggle" aria-label="Toggle theme"
+                style="position:fixed;top:1rem;right:1rem;">🌙</button>
         </div>
     </div>
 
@@ -60,6 +93,7 @@
                 <button class="tab-btn" data-tab="tab-insights">Insights</button>
             </div>
             <div style="display:flex;align-items:center;gap:.5rem;">
+                <span id="snapshot-badge" class="snapshot-badge hidden"></span>
                 <button id="theme-toggle-dash" class="theme-toggle" aria-label="Toggle theme">🌙</button>
                 <button id="reset-btn" class="btn-ghost">⬅ Upload Another</button>
             </div>
@@ -176,7 +210,8 @@
             <div class="section">
                 <div class="panel">
                     <div class="panel-head">
-                        <h2>Fund-wise Breakdown <span class="hint-tag">Click a row to see Year-on-Year details</span></h2>
+                        <h2>Fund-wise Breakdown <span class="hint-tag">Click a row to see Year-on-Year details</span>
+                        </h2>
                     </div>
                     <div class="table-scroll">
                         <table id="fund-table">
@@ -356,6 +391,7 @@
         </div>
     </div>
 
+    <script src="storage.js"></script>
     <script src="app.js"></script>
 </body>
 

@@ -33,16 +33,13 @@ function applyTheme(theme) {
     document.querySelectorAll('.theme-toggle').forEach(b => b.textContent = icon);
     C = getThemeColors();
     Chart.defaults.color = C.textColor;
-    // Re-render charts if data is loaded
     if (appData) renderDashboard(appData);
 }
 
 // Init theme from localStorage
-(function() {
+(function () {
     const saved = localStorage.getItem('mf-theme') || 'dark';
     document.documentElement.setAttribute('data-theme', saved);
-    const icon = saved === 'light' ? '☀️' : '🌙';
-    // Buttons may not exist yet, will be set on DOMContentLoaded
     C = getThemeColors();
     Chart.defaults.color = C.textColor;
 })();
@@ -81,9 +78,78 @@ function txnTypeClass(t) {
 
 /* ── APP STATE ──────────────────────────────────────────────────────── */
 let appData = null;
+let pyodideWorker = null;
+let pyodideReady = false;
+let useLocalBackend = false; // true if running with FastAPI backend
 
-/* ── UPLOAD ─────────────────────────────────────────────────────────── */
-document.addEventListener('DOMContentLoaded', () => {
+/* ── DETECT MODE ───────────────────────────────────────────────────── */
+// If running on localhost with a backend, use fetch; otherwise use Pyodide
+async function detectMode() {
+    try {
+        const res = await fetch('/api/upload', { method: 'OPTIONS' });
+        if (res.ok || res.status === 405 || res.status === 422) {
+            useLocalBackend = true;
+        }
+    } catch (e) {
+        useLocalBackend = false;
+    }
+}
+
+/* ── PYODIDE WORKER MANAGEMENT ──────────────────────────────────────── */
+function initPyodideWorker() {
+    return new Promise((resolve, reject) => {
+        pyodideWorker = new Worker('pyodide-worker.js');
+        const progressStages = { 1: 10, 2: 25, 3: 50, 4: 70, 5: 90, 6: 100 };
+
+        pyodideWorker.onmessage = (e) => {
+            const { type, stage, message, data } = e.data;
+
+            switch (type) {
+                case 'progress': {
+                    const bar = document.getElementById('pyodide-progress');
+                    const label = document.getElementById('pyodide-stage');
+                    if (bar) bar.style.width = (progressStages[stage] || 0) + '%';
+                    if (label) label.textContent = message || '';
+                    break;
+                }
+                case 'ready':
+                    pyodideReady = true;
+                    resolve();
+                    break;
+                case 'error':
+                    reject(new Error(message));
+                    break;
+            }
+        };
+
+        pyodideWorker.onerror = (err) => {
+            reject(new Error('Worker error: ' + err.message));
+        };
+
+        pyodideWorker.postMessage({ type: 'init' });
+    });
+}
+
+function analyzeWithPyodide(pdfArrayBuffer, password) {
+    return new Promise((resolve, reject) => {
+        const handler = (e) => {
+            const { type, data, message } = e.data;
+            if (type === 'result') {
+                pyodideWorker.removeEventListener('message', handler);
+                resolve(data);
+            } else if (type === 'error') {
+                pyodideWorker.removeEventListener('message', handler);
+                reject(new Error(message));
+            }
+        };
+        pyodideWorker.addEventListener('message', handler);
+        pyodideWorker.postMessage({ type: 'analyze', pdfBytes: pdfArrayBuffer, password });
+    });
+}
+
+/* ── UPLOAD & INITIALIZATION ────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', async () => {
+    const pyodideOverlay = document.getElementById('pyodide-loading');
     const uploadScreen = document.getElementById('upload-screen');
     const dashScreen = document.getElementById('dashboard-screen');
     const form = document.getElementById('upload-form');
@@ -96,6 +162,59 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnLoader = document.getElementById('btn-loader');
     const errMsg = document.getElementById('upload-error');
     const resetBtn = document.getElementById('reset-btn');
+
+    // Detect if local backend is available
+    await detectMode();
+
+    if (useLocalBackend) {
+        // Local dev mode — skip Pyodide, use FastAPI backend
+        pyodideOverlay.classList.add('hidden');
+        uploadScreen.classList.remove('hidden');
+    } else {
+        // Browser-only mode — load Pyodide
+        try {
+            await initPyodideWorker();
+            pyodideOverlay.classList.add('hidden');
+            uploadScreen.classList.remove('hidden');
+        } catch (err) {
+            const stageEl = document.getElementById('pyodide-stage');
+            if (stageEl) {
+                stageEl.textContent = '❌ ' + err.message;
+                stageEl.style.color = 'var(--red)';
+            }
+            return;
+        }
+    }
+
+    // Check for previous session
+    try {
+        const prev = await window.MFStorage.getLatestSnapshot();
+        if (prev) {
+            const prevBanner = document.getElementById('prev-session');
+            const prevDate = document.getElementById('prev-session-date');
+            const d = new Date(prev.timestamp);
+            prevDate.textContent = 'Analyzed on ' + d.toLocaleDateString('en-IN', {
+                day: 'numeric', month: 'short', year: 'numeric',
+                hour: '2-digit', minute: '2-digit'
+            });
+            prevBanner.classList.remove('hidden');
+
+            document.getElementById('load-prev-btn').addEventListener('click', () => {
+                appData = prev.data;
+                renderDashboard(appData);
+                showSnapshotBadge(prev.timestamp);
+                uploadScreen.classList.add('hidden');
+                dashScreen.classList.remove('hidden');
+                window.scrollTo(0, 0);
+            });
+
+            document.getElementById('dismiss-prev-btn').addEventListener('click', () => {
+                prevBanner.classList.add('hidden');
+            });
+        }
+    } catch (e) {
+        console.warn('Could not load previous session:', e);
+    }
 
     // File picker
     fileInput.addEventListener('change', () => {
@@ -120,16 +239,36 @@ document.addEventListener('DOMContentLoaded', () => {
         btnText.textContent = 'Analyzing…';
         btnLoader.classList.remove('hidden');
 
-        const fd = new FormData();
-        fd.append('file', fileInput.files[0]);
-        fd.append('password', passInput.value);
-
         try {
-            const res = await fetch('/api/upload', { method: 'POST', body: fd });
-            const json = await res.json();
-            if (!res.ok) throw new Error(json.detail || 'Upload failed');
-            appData = json.data;
+            let data;
+
+            if (useLocalBackend) {
+                // Use FastAPI backend
+                const fd = new FormData();
+                fd.append('file', fileInput.files[0]);
+                fd.append('password', passInput.value);
+                const res = await fetch('/api/upload', { method: 'POST', body: fd });
+                const json = await res.json();
+                if (!res.ok) throw new Error(json.detail || 'Upload failed');
+                data = json.data;
+            } else {
+                // Use Pyodide Web Worker
+                if (!pyodideReady) throw new Error('Python runtime not ready. Please wait or refresh.');
+                const arrayBuffer = await fileInput.files[0].arrayBuffer();
+                data = await analyzeWithPyodide(arrayBuffer, passInput.value);
+            }
+
+            appData = data;
             renderDashboard(appData);
+
+            // Save snapshot
+            try {
+                await window.MFStorage.saveSnapshot(data);
+                showSnapshotBadge(new Date().toISOString());
+            } catch (e) {
+                console.warn('Could not save snapshot:', e);
+            }
+
             uploadScreen.classList.add('hidden');
             dashScreen.classList.remove('hidden');
             window.scrollTo(0, 0);
@@ -182,6 +321,17 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 });
+
+
+/* ── SNAPSHOT BADGE ─────────────────────────────────────────────────── */
+function showSnapshotBadge(timestamp) {
+    const badge = document.getElementById('snapshot-badge');
+    if (!badge) return;
+    const d = new Date(timestamp);
+    badge.textContent = '📁 ' + d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    badge.title = 'Analyzed on ' + d.toLocaleString('en-IN');
+    badge.classList.remove('hidden');
+}
 
 
 /* ── RENDER DASHBOARD ───────────────────────────────────────────────── */
@@ -281,15 +431,6 @@ function openModal(row) {
             <th class="num">Units</th>
             <th class="num">NAV</th>
         </tr>
-    `;
-
-    const sumDiv = document.getElementById('modal-summary');
-    sumDiv.innerHTML = `
-        <div class="ms-chip"><span>Invested</span>${lakh(row.invested)}</div>
-        <div class="ms-chip"><span>Withdrawn</span>${row.withdrawn > 0 ? lakh(row.withdrawn) : '—'}</div>
-        <div class="ms-chip"><span>Dividends</span>${row.dividends > 0 ? '<b class="positive">' + lakh(row.dividends) + '</b>' : '—'}</div>
-        <div class="ms-chip"><span>Net</span><b class="${row.net >= 0 ? 'positive' : 'negative'}">${lakh(row.net)}</b></div>
-        <div class="ms-chip"><span>Transactions</span>${row.txn_count}</div>
     `;
 
     const tbody = document.getElementById('modal-tbody');
@@ -412,7 +553,6 @@ function renderAllocation(funds, portfolioTotal) {
     const top = funds.filter(f => f.current_value > 0).slice(0, 14);
     if (!top.length) return;
     const ctx = document.getElementById('ch-alloc').getContext('2d');
-    // Use full portfolio total for accurate percentages, fallback to subset sum
     const total = portfolioTotal || top.reduce((s, f) => s + f.current_value, 0);
     charts['alloc'] = new Chart(ctx, {
         type: 'doughnut',
@@ -574,10 +714,9 @@ function renderInsights(d) {
 function renderTopPerformers(topFunds) {
     const tbody = document.getElementById('top-performers');
     tbody.innerHTML = '';
-    
-    // If it's already pre-filtered by backend, just slice. Otherwise fallback.
-    const top = (topFunds[0] && topFunds[0].xirr !== undefined) 
-        ? topFunds.slice(0, 5) 
+
+    const top = (topFunds[0] && topFunds[0].xirr !== undefined)
+        ? topFunds.slice(0, 5)
         : topFunds.filter(f => f.xirr != null && f.current_value > 0).sort((a, b) => b.xirr - a.xirr).slice(0, 5);
 
     if (!top.length) {
@@ -602,8 +741,7 @@ function renderTopPerformers(topFunds) {
 function renderBottomPerformers(worstFunds) {
     const tbody = document.getElementById('bottom-performers');
     tbody.innerHTML = '';
-    
-    // If it's already pre-filtered by backend, just slice. Otherwise fallback.
+
     const bottom = (worstFunds[0] && worstFunds[0].xirr !== undefined)
         ? worstFunds.slice(0, 5)
         : worstFunds.filter(f => f.xirr != null && f.current_value > 0).sort((a, b) => a.xirr - b.xirr).slice(0, 5);
@@ -634,7 +772,6 @@ function renderConcentration(funds) {
     if (!active.length) return;
 
     const total = active.reduce((s, f) => s + f.current_value, 0);
-    // Show top 5, group rest as "Others"
     const top5 = active.slice(0, 5);
     const othersVal = active.slice(5).reduce((s, f) => s + f.current_value, 0);
     const labels = top5.map(f => f.name.length > 28 ? f.name.slice(0, 26) + '…' : f.name);
@@ -662,7 +799,6 @@ function renderConcentration(funds) {
 
 /* ── AMC DIVERSIFICATION ───────────────────────────────────────────── */
 function parseAMC(fundName) {
-    // Extract AMC from fund name patterns
     const amcPatterns = [
         [/^absl|^aditya birla|^birla sun life/i, 'Aditya Birla SL'],
         [/^dsp/i, 'DSP'],
@@ -688,7 +824,6 @@ function parseAMC(fundName) {
     for (const [pat, name] of amcPatterns) {
         if (pat.test(fundName)) return name;
     }
-    // Fallback: first 2 words
     return fundName.split(/\s+/).slice(0, 2).join(' ');
 }
 
@@ -730,13 +865,12 @@ function renderConsistency(yearData) {
     const grid = document.getElementById('consistency-grid');
     grid.innerHTML = '';
 
-    // Collect all transactions into month buckets
-    const monthMap = {}; // 'YYYY-MM' -> count of purchases
+    const monthMap = {};
     yearData.forEach(yr => {
         (yr.txns || []).forEach(t => {
             const tp = (t.type || '').toUpperCase();
             if (tp === 'PURCHASE' || tp === 'PURCHASE_SIP') {
-                const m = t.date.slice(0, 7); // 'YYYY-MM'
+                const m = t.date.slice(0, 7);
                 monthMap[m] = (monthMap[m] || 0) + 1;
             }
         });
@@ -748,11 +882,8 @@ function renderConsistency(yearData) {
         return;
     }
 
-    // Show last 24 months or all if fewer
-    const maxVal = Math.max(...Object.values(monthMap));
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-    // Generate all months from first to last
     const start = new Date(allMonths[0] + '-01');
     const end = new Date(allMonths[allMonths.length - 1] + '-01');
     const months = [];
@@ -763,7 +894,6 @@ function renderConsistency(yearData) {
         cur.setMonth(cur.getMonth() + 1);
     }
 
-    // Show last 36 months max
     const shown = months.slice(-36);
 
     shown.forEach(m => {
@@ -794,20 +924,17 @@ function renderDormant(funds) {
         return;
     }
     dormant.forEach(f => {
-        // Determine how the money left:
         const totalOut = (f.redeemed || 0) + (f.switched_out || 0);
         let status, statusClass, realizedPnL;
 
         if ((f.switched_out || 0) > 0 && (f.redeemed || 0) === 0) {
-            // Purely switched to another fund — not a loss
             status = 'Switched';
             statusClass = 'txn-other';
-            realizedPnL = null; // Not applicable — money just moved
+            realizedPnL = null;
         } else if ((f.redeemed || 0) > 0) {
-            // Redeemed (possibly partially switched too)
             status = 'Redeemed';
             statusClass = 'txn-sell';
-            realizedPnL = totalOut - f.invested; // actual realized P&L
+            realizedPnL = totalOut - f.invested;
         } else {
             status = 'Exited';
             statusClass = 'txn-other';
@@ -836,13 +963,11 @@ function renderHealthCheck(funds, yearData, summary) {
     const cards = [];
     const active = funds.filter(f => f.current_value > 0);
 
-    // 1. Diversification Score
     const numActive = active.length;
     const divStatus = numActive >= 6 ? 'good' : numActive >= 3 ? 'warn' : 'bad';
     const divLabel = numActive >= 6 ? 'Well Diversified' : numActive >= 3 ? 'Could Improve' : 'Too Concentrated';
     cards.push({ title: 'Fund Diversification', value: numActive + ' active funds', badge: divLabel, badgeCls: divStatus, desc: numActive >= 6 ? 'Good spread across funds' : 'Consider adding more funds for risk distribution' });
 
-    // 2. Top Fund Concentration
     if (active.length) {
         const totalVal = active.reduce((s, f) => s + f.current_value, 0);
         const topPct = (active[0].current_value / totalVal * 100);
@@ -851,7 +976,6 @@ function renderHealthCheck(funds, yearData, summary) {
         cards.push({ title: 'Top Fund Concentration', value: topPct.toFixed(1) + '%', badge: concLabel, badgeCls: concStatus, desc: 'Largest fund: ' + (active[0].name.length > 40 ? active[0].name.slice(0, 38) + '…' : active[0].name) });
     }
 
-    // 3. XIRR Performance
     if (summary.overall_xirr != null) {
         const x = summary.overall_xirr;
         const xStatus = x >= 12 ? 'good' : x >= 6 ? 'warn' : 'bad';
@@ -859,7 +983,6 @@ function renderHealthCheck(funds, yearData, summary) {
         cards.push({ title: 'Portfolio XIRR', value: pct(x), badge: xLabel, badgeCls: xStatus, desc: x >= 12 ? 'Beating most FD and debt instruments' : x >= 6 ? 'On par with conservative investing' : 'Consider reviewing fund selection' });
     }
 
-    // 4. Investment Tenure
     if (yearData.length) {
         const yrs = yearData.length;
         const yrStatus = yrs >= 7 ? 'good' : yrs >= 3 ? 'warn' : 'bad';
@@ -867,7 +990,6 @@ function renderHealthCheck(funds, yearData, summary) {
         cards.push({ title: 'Investment Tenure', value: yrs + ' Financial Years', badge: yrLabel, badgeCls: yrStatus, desc: yrs >= 7 ? 'Long-term wealth creation in progress' : 'Stay invested — long-term compounding is key' });
     }
 
-    // 5. Unrealized Gain %
     if (summary.total_invested > 0) {
         const gainPct = summary.abs_return_pct;
         const gStatus = gainPct >= 30 ? 'good' : gainPct >= 10 ? 'warn' : 'bad';
@@ -875,18 +997,15 @@ function renderHealthCheck(funds, yearData, summary) {
         cards.push({ title: 'Unrealized Returns', value: pct(gainPct), badge: gLabel, badgeCls: gStatus, desc: 'Overall portfolio absolute return on invested capital' });
     }
 
-    // 6. Dormant Fund Alert
     const dormantCount = funds.filter(f => f.current_value <= 0 && f.invested > 0).length;
     if (dormantCount > 0) {
         cards.push({ title: 'Dormant Funds', value: dormantCount + ' fund' + (dormantCount > 1 ? 's' : ''), badge: 'Attention', badgeCls: 'warn', desc: 'Fully redeemed funds — check if exit was planned' });
     }
 
-    // 7. AMC Count
     const amcs = new Set(active.map(f => parseAMC(f.name)));
     const amcStatus = amcs.size >= 4 ? 'good' : amcs.size >= 2 ? 'warn' : 'bad';
     cards.push({ title: 'AMC Spread', value: amcs.size + ' AMC' + (amcs.size !== 1 ? 's' : ''), badge: amcs.size >= 4 ? 'Diversified' : 'Limited', badgeCls: amcStatus, desc: amcs.size >= 4 ? 'Good distribution across fund houses' : 'Consider spreading across more AMCs for safety' });
 
-    // Render cards
     cards.forEach(c => {
         container.innerHTML += `<div class="h-card">
             <div class="h-title">${c.title}</div>
@@ -903,7 +1022,7 @@ function parseCategory(fundName) {
     if (/liquid|overnight|money market|ultra short/i.test(s)) return 'Liquid / UST';
     if (/elss|tax sav/i.test(s)) return 'ELSS';
     if (/gilt|gsec|government|sovereign/i.test(s)) return 'Gilt';
-    if (/debt|bond|income|credit risk|banking \& psu|corporate bond|fixed maturity|fmp|short duration|medium duration|long duration|dynamic bond|low duration/i.test(s)) return 'Debt';
+    if (/debt|bond|income|credit risk|banking \&amp; psu|corporate bond|fixed maturity|fmp|short duration|medium duration|long duration|dynamic bond|low duration/i.test(s)) return 'Debt';
     if (/hybrid|balanced|equity savings|aggressive|conservative|multi.?asset|arbitrage/i.test(s)) return 'Hybrid';
     if (/index|nifty|sensex|etf|s\s*&\s*p|bse/i.test(s)) return 'Index / ETF';
     if (/small\s*cap/i.test(s)) return 'Small Cap';
@@ -934,14 +1053,12 @@ function renderFundCategories(funds, summary) {
     const sorted = Object.entries(catMap).sort((a, b) => b[1].value - a[1].value);
     const total = summary.current_value || sorted.reduce((s, [, v]) => s + v.value, 0);
 
-    // Render summary chips
     if (container) {
         container.innerHTML = sorted.map(([cat, d]) =>
             `<div class="cat-chip"><span class="cat-name">${cat}</span><span class="cat-val">${lakh(d.value)}</span><span class="cat-pct">${(d.value / total * 100).toFixed(1)}%</span><span class="cat-count">${d.count} fund${d.count > 1 ? 's' : ''}</span></div>`
         ).join('');
     }
 
-    // Chart
     const canvas = document.getElementById('ch-categories');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
