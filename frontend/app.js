@@ -83,8 +83,13 @@ let pyodideReady = false;
 let useLocalBackend = false; // true if running with FastAPI backend
 
 /* ── DETECT MODE ───────────────────────────────────────────────────── */
-// If running on localhost with a backend, use fetch; otherwise use Pyodide
+// Only probe for local FastAPI backend if running on localhost / 127.0.0.1
 async function detectMode() {
+    const isLocalhost = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
+    if (!isLocalhost) {
+        useLocalBackend = false;
+        return;
+    }
     try {
         const res = await fetch('/api/upload', { method: 'OPTIONS' });
         if (res.ok || res.status === 405 || res.status === 422) {
