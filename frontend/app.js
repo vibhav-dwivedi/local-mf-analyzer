@@ -100,58 +100,6 @@ async function detectMode() {
     }
 }
 
-/* ── PYODIDE WORKER MANAGEMENT ──────────────────────────────────────── */
-function initPyodideWorker() {
-    return new Promise((resolve, reject) => {
-        pyodideWorker = new Worker('pyodide-worker.js');
-        const progressStages = { 1: 10, 2: 25, 3: 50, 4: 70, 5: 90, 6: 100 };
-
-        pyodideWorker.onmessage = (e) => {
-            const { type, stage, message, data } = e.data;
-
-            switch (type) {
-                case 'progress': {
-                    const bar = document.getElementById('pyodide-progress');
-                    const label = document.getElementById('pyodide-stage');
-                    if (bar) bar.style.width = (progressStages[stage] || 0) + '%';
-                    if (label) label.textContent = message || '';
-                    break;
-                }
-                case 'ready':
-                    pyodideReady = true;
-                    resolve();
-                    break;
-                case 'error':
-                    reject(new Error(message));
-                    break;
-            }
-        };
-
-        pyodideWorker.onerror = (err) => {
-            reject(new Error('Worker error: ' + err.message));
-        };
-
-        pyodideWorker.postMessage({ type: 'init' });
-    });
-}
-
-function analyzeWithPyodide(pdfArrayBuffer, password) {
-    return new Promise((resolve, reject) => {
-        const handler = (e) => {
-            const { type, data, message } = e.data;
-            if (type === 'result') {
-                pyodideWorker.removeEventListener('message', handler);
-                resolve(data);
-            } else if (type === 'error') {
-                pyodideWorker.removeEventListener('message', handler);
-                reject(new Error(message));
-            }
-        };
-        pyodideWorker.addEventListener('message', handler);
-        pyodideWorker.postMessage({ type: 'analyze', pdfBytes: pdfArrayBuffer, password });
-    });
-}
-
 /* ── UPLOAD & INITIALIZATION ────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', async () => {
     const pyodideOverlay = document.getElementById('pyodide-loading');
