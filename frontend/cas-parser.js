@@ -79,6 +79,23 @@ window.MFCasParser = (function () {
     }
 
     /**
+     * Clean and strip ISIN, AMC, Folio noise from Scheme names
+     */
+    function cleanSchemeName(rawName) {
+        if (!rawName) return 'Unknown Scheme';
+        let name = rawName.replace(/ISIN\s*:\s*[A-Z0-9]+/gi, '')
+            .replace(/AMC\s*:\s*[^-\n]+/gi, '')
+            .replace(/Advisor\s*:\s*[^-\n]+/gi, '')
+            .replace(/Registrar\s*:\s*[^-\n]+/gi, '')
+            .replace(/Folio\s*(?:No|Number)?[:\s]*[A-Za-z0-9/\s\-_]+/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        // Remove trailing hyphens or colons
+        name = name.replace(/^[-:\s]+|[-:\s]+$/g, '');
+        return name || rawName.trim();
+    }
+
+    /**
      * Parse text lines extracted from pdf.js into structured folios & schemes
      */
     function parseTextLines(lines) {
@@ -87,11 +104,15 @@ window.MFCasParser = (function () {
         let currentScheme = null;
 
         // Regex patterns for Indian CAS
-        const folioRegex = /Folio\s*(?:No|Number)?[:\s]*([A-Za-z0-9/\s\-_]+)/i;
+        const folioRegex = /(?:Folio\s*(?:No|Number)?|Account\s*No)[:\s]*([A-Za-z0-9/\s\-_]+)/i;
         const valuationRegex = /(?:Valuation|Market Value|NAV Date)[:\s]*.*?INR\s*([0-9,.]+)|Valuation\s*on\s*.*?:\s*INR\s*([0-9,.]+)/i;
         const navRegex = /NAV\s*on\s*.*?:\s*INR\s*([0-9,.]+)|NAV\s*[:\s]*INR\s*([0-9,.]+)/i;
-        // Date line: 15-Jan-2023  Purchase  10,000.00  250.123  39.98
-        const txnLineRegex = /^(\d{1,2}[-/][A-Za-z]{3}[-/]\d{4})\s+(.+?)\s+([-(]?[0-9,.]+\)?)\s+([-(]?[0-9,.]+\)?)\s+([-(]?[0-9,.]+\)?)/;
+
+        // Transaction Regex variants:
+        // 1. Date Description Amount Units NAV
+        // 2. Date Description Units NAV Amount
+        const txnLineRegex1 = /^(\d{1,2}[-/][A-Za-z]{3}[-/]\d{4})\s+(.+?)\s+([-(]?[0-9,.]+\)?)\s+([-(]?[0-9,.]+\)?)\s+([-(]?[0-9,.]+\)?)/;
+        const txnLineRegex2 = /^(\d{1,2}[-/][A-Za-z]{3}[-/]\d{4})\s+(.+?)\s+([-(]?[0-9,.]+\)?)/;
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i].trim();
@@ -99,7 +120,7 @@ window.MFCasParser = (function () {
 
             // Folio Header
             const folioMatch = line.match(folioRegex);
-            if (folioMatch && !line.includes('Transaction Date')) {
+            if (folioMatch && !line.includes('Transaction Date') && !line.includes('Opening Balance')) {
                 const fNo = folioMatch[1].trim();
                 currentFolio = { folio: fNo, schemes: [] };
                 folios.push(currentFolio);
@@ -107,16 +128,25 @@ window.MFCasParser = (function () {
                 continue;
             }
 
-            // Scheme Name (usually starts after ISIN or AMC header or includes Option/Direct/Growth)
-            if (currentFolio && (/Direct|Regular|Growth|Dividend|IDCW|Fund|Plan|Option/i.test(line)) && !line.match(/^\d{1,2}[-/]/) && !line.includes('Valuation') && !line.includes('Balance')) {
-                // If it looks like a scheme header line
-                if (!currentScheme || currentScheme.scheme !== line) {
-                    currentScheme = {
-                        scheme: line,
-                        valuation: { value: 0, nav: 0 },
-                        transactions: []
-                    };
-                    currentFolio.schemes.push(currentScheme);
+            // Scheme Name line
+            if (currentFolio && (/Direct|Regular|Growth|Dividend|IDCW|Fund|Plan|Option|Index|Equity|Debt|Balanced/i.test(line)) &&
+                !line.match(/^\d{1,2}[-/]/) &&
+                !line.includes('Valuation') &&
+                !line.includes('Balance') &&
+                !line.includes('Total') &&
+                !line.includes('Statement') &&
+                !line.includes('Page ')) {
+
+                const cleanedName = cleanSchemeName(line);
+                if (cleanedName.length > 5) {
+                    if (!currentScheme || currentScheme.scheme !== cleanedName) {
+                        currentScheme = {
+                            scheme: cleanedName,
+                            valuation: { value: 0, nav: 0 },
+                            transactions: []
+                        };
+                        currentFolio.schemes.push(currentScheme);
+                    }
                 }
             }
 
@@ -134,25 +164,44 @@ window.MFCasParser = (function () {
                 }
             }
 
-            // Transaction Line
-            const txnMatch = line.match(txnLineRegex);
-            if (txnMatch && currentScheme) {
-                const dateStr = txnMatch[1];
-                const desc = txnMatch[2].trim();
-                const amt = cleanNum(txnMatch[3]);
-                const units = cleanNum(txnMatch[4]);
-                const nav = cleanNum(txnMatch[5]);
+            // Transaction Line Match
+            if (currentScheme) {
+                const txnMatch1 = line.match(txnLineRegex1);
+                if (txnMatch1) {
+                    const dateStr = txnMatch1[1];
+                    const desc = txnMatch1[2].trim();
+                    const amt = cleanNum(txnMatch1[3]);
+                    const units = cleanNum(txnMatch1[4]);
+                    const nav = cleanNum(txnMatch1[5]);
+                    const txnType = classifyTxnType(desc);
 
-                const txnType = classifyTxnType(desc);
+                    currentScheme.transactions.push({
+                        date: dateStr,
+                        description: desc,
+                        type: txnType,
+                        amount: amt,
+                        units: units,
+                        nav: nav
+                    });
+                } else {
+                    // Try fallback match for simpler lines
+                    const txnMatch2 = line.match(txnLineRegex2);
+                    if (txnMatch2 && (classifyTxnType(txnMatch2[2]) !== 'OTHER' || /Purchase|SIP|Redemption|Switch/i.test(txnMatch2[2]))) {
+                        const dateStr = txnMatch2[1];
+                        const desc = txnMatch2[2].trim();
+                        const amt = cleanNum(txnMatch2[3]);
+                        const txnType = classifyTxnType(desc);
 
-                currentScheme.transactions.push({
-                    date: dateStr,
-                    description: desc,
-                    type: txnType,
-                    amount: amt,
-                    units: units,
-                    nav: nav
-                });
+                        currentScheme.transactions.push({
+                            date: dateStr,
+                            description: desc,
+                            type: txnType,
+                            amount: amt,
+                            units: 0,
+                            nav: 0
+                        });
+                    }
+                }
             }
         }
 
