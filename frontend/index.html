@@ -12,28 +12,14 @@
     <link rel="icon"
         href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📊</text></svg>">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
 
-    <!-- ░░░ PYODIDE LOADING OVERLAY ░░░ -->
-    <div id="pyodide-loading" class="pyodide-overlay">
-        <div class="pyodide-loader">
-            <div class="hero-glyph">📊</div>
-            <h1>Mutual Fund Analyzer</h1>
-            <p class="lead">Loading Python runtime in your browser…</p>
-            <div class="progress-bar-track">
-                <div class="progress-bar-fill" id="pyodide-progress" style="width: 0%"></div>
-            </div>
-            <p class="pyodide-stage" id="pyodide-stage">Initializing…</p>
-            <p class="privacy" style="margin-top: 2rem;">🔒 Everything runs locally — no server, no data leaves your
-                device.</p>
-        </div>
-    </div>
-
     <!-- ░░░ UPLOAD SCREEN ░░░ -->
-    <div id="upload-screen" class="hidden">
+    <div id="upload-screen">
         <div class="upload-center">
             <div class="hero-glyph">📊</div>
             <h1>Mutual Fund Analyzer</h1>
@@ -394,6 +380,8 @@
     </div>
 
     <script src="storage.js"></script>
+    <script src="xirr.js"></script>
+    <script src="cas-parser.js"></script>
     <script src="app.js"></script>
 </body>
 

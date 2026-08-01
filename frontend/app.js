@@ -168,28 +168,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const errMsg = document.getElementById('upload-error');
     const resetBtn = document.getElementById('reset-btn');
 
-    // Detect if local backend is available
+    // Check if local FastAPI backend is available (for local dev)
     await detectMode();
-
-    if (useLocalBackend) {
-        // Local dev mode — skip Pyodide, use FastAPI backend
-        pyodideOverlay.classList.add('hidden');
-        uploadScreen.classList.remove('hidden');
-    } else {
-        // Browser-only mode — load Pyodide
-        try {
-            await initPyodideWorker();
-            pyodideOverlay.classList.add('hidden');
-            uploadScreen.classList.remove('hidden');
-        } catch (err) {
-            const stageEl = document.getElementById('pyodide-stage');
-            if (stageEl) {
-                stageEl.textContent = '❌ ' + err.message;
-                stageEl.style.color = 'var(--red)';
-            }
-            return;
-        }
-    }
 
     // Check for previous session
     try {
@@ -241,14 +221,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!fileInput.files.length) return;
         errMsg.classList.add('hidden');
         submitBtn.disabled = true;
-        btnText.textContent = 'Analyzing…';
+        btnText.textContent = 'Analyzing PDF…';
         btnLoader.classList.remove('hidden');
 
         try {
             let data;
 
             if (useLocalBackend) {
-                // Use FastAPI backend
+                // Use FastAPI backend (local dev mode)
                 const fd = new FormData();
                 fd.append('file', fileInput.files[0]);
                 fd.append('password', passInput.value);
@@ -257,10 +237,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (!res.ok) throw new Error(json.detail || 'Upload failed');
                 data = json.data;
             } else {
-                // Use Pyodide Web Worker
-                if (!pyodideReady) throw new Error('Python runtime not ready. Please wait or refresh.');
+                // Use Pure JS Parser (pdf.js)
                 const arrayBuffer = await fileInput.files[0].arrayBuffer();
-                data = await analyzeWithPyodide(arrayBuffer, passInput.value);
+                data = await window.MFCasParser.parsePDF(
+                    arrayBuffer,
+                    passInput.value,
+                    (stage, statusMsg) => {
+                        btnText.textContent = statusMsg;
+                    }
+                );
             }
 
             appData = data;
