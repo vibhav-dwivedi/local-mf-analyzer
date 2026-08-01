@@ -211,7 +211,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             dashScreen.classList.remove('hidden');
             window.scrollTo(0, 0);
         } catch (err) {
-            errMsg.textContent = '⚠ ' + err.message;
+            console.error('CAS Analysis Error:', err);
+            const errStack = err.stack || err.toString();
+            errMsg.innerHTML = `
+                <div class="error-box">
+                    <div class="error-header">
+                        <strong>⚠ ${escapeHTML(err.message || 'An unexpected error occurred during PDF parsing.')}</strong>
+                    </div>
+                    <details class="error-details">
+                        <summary>View Debug Technical Details</summary>
+                        <pre class="error-stack">${escapeHTML(errStack)}</pre>
+                        <button type="button" class="btn-copy-error" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent).then(() => this.textContent = 'Copied!').catch(() => {})">Copy Error Log</button>
+                    </details>
+                </div>
+            `;
             errMsg.classList.remove('hidden');
         } finally {
             submitBtn.disabled = false;

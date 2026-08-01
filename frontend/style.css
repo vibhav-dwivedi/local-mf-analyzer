@@ -1219,3 +1219,70 @@ body.modal-open {
     padding: .25rem .65rem;
     white-space: nowrap;
 }
+
+/* ═════════════════════════════════════════
+   DEBUG ERROR BOX
+   ═════════════════════════════════════════ */
+.error-box {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid var(--red);
+    border-radius: 10px;
+    padding: 1rem;
+    color: var(--text);
+    text-align: left;
+    margin-top: 1rem;
+}
+
+.error-header {
+    margin-bottom: 0.5rem;
+    color: var(--red);
+    font-size: 0.95rem;
+}
+
+.error-details {
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.error-details summary {
+    cursor: pointer;
+    color: var(--text-sec);
+    font-weight: 500;
+    user-select: none;
+    outline: none;
+    padding: 0.2rem 0;
+}
+
+.error-details summary:hover {
+    color: var(--text);
+}
+
+.error-stack {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem;
+    font-family: monospace;
+    font-size: 0.78rem;
+    color: var(--red);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+    margin: 0.5rem 0;
+}
+
+.btn-copy-error {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.3rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-copy-error:hover {
+    background: var(--border);
+}
