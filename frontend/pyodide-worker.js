@@ -55,20 +55,29 @@ async function initialize() {
         // Fetch and load analyzer.py
         self.postMessage({ type: 'progress', stage: 5, message: 'Loading analyzer…' });
 
-        // Determine base URL for fetching analyzer.py
-        // The worker is in /frontend/, analyzer.py is in the parent directory
+        // Try multiple URL patterns to find analyzer.py relative to the worker location
         const workerUrl = self.location.href;
-        const baseUrl = workerUrl.substring(0, workerUrl.lastIndexOf('/frontend/') + 1);
-        const analyzerUrl = baseUrl + 'analyzer.py';
+        const candidateUrls = [
+            // 1. Parent directory of worker (e.g. /local-mf-analyzer/analyzer.py)
+            workerUrl.substring(0, workerUrl.lastIndexOf('/frontend/')) + '/analyzer.py',
+            // 2. Same directory (if copied into frontend/)
+            workerUrl.substring(0, workerUrl.lastIndexOf('/')) + '/analyzer.py',
+            // 3. Root path fallback
+            '/analyzer.py',
+            '../analyzer.py'
+        ];
 
-        try {
-            const resp = await fetch(analyzerUrl);
-            if (!resp.ok) throw new Error(`Failed to fetch analyzer.py: ${resp.status}`);
-            analyzerCode = await resp.text();
-        } catch (e) {
-            // If hosted differently, try relative paths
-            console.warn('Could not fetch analyzer.py from', analyzerUrl, '- using embedded analyzer');
-            analyzerCode = null;
+        for (const url of candidateUrls) {
+            try {
+                const resp = await fetch(url);
+                if (resp.ok) {
+                    analyzerCode = await resp.text();
+                    console.log('Successfully loaded analyzer.py from:', url);
+                    break;
+                }
+            } catch (e) {
+                // try next URL
+            }
         }
 
         if (analyzerCode) {
@@ -82,8 +91,7 @@ if '/home/pyodide' not in sys.path:
 import analyzer
 `);
         } else {
-            // Fallback: embed a minimal version inline
-            throw new Error('Could not load analyzer.py');
+            throw new Error('Could not load analyzer.py from any location');
         }
 
         self.postMessage({ type: 'progress', stage: 6, message: 'Ready!' });
