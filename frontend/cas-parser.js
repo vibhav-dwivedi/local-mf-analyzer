@@ -53,7 +53,10 @@ window.MFCasParser = (function () {
         }
     }
 
-    function cleanNum(str) {
+    function cleanNum(val) {
+        if (val === null || val === undefined) return 0;
+        if (typeof val === 'number') return isNaN(val) ? 0 : val;
+        const str = String(val).trim();
         if (!str) return 0;
         // Strip non-numeric chars except dot and minus
         const cleaned = str.replace(/[^0-9.-]/g, '');
