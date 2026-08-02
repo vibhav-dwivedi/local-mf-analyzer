@@ -118,7 +118,7 @@ function startPyodideWorker(onStageUpdate) {
     return pyodideInitPromise;
 }
 
-function analyzeWithPyodide(pdfArrayBuffer, password) {
+function analyzeWithPyodide(textLines) {
     return new Promise((resolve, reject) => {
         const handler = (e) => {
             const { type, data, message } = e.data;
@@ -131,8 +131,55 @@ function analyzeWithPyodide(pdfArrayBuffer, password) {
             }
         };
         pyodideWorker.addEventListener('message', handler);
-        pyodideWorker.postMessage({ type: 'analyze', pdfBytes: pdfArrayBuffer, password });
+        pyodideWorker.postMessage({ type: 'analyze', textLines });
     });
+}
+
+/* ── PDF TEXT EXTRACTION (pdf.js) ────────────────────────────────── */
+async function extractTextFromPDF(arrayBuffer, password, onProgress) {
+    if (!window.pdfjsLib) throw new Error('pdf.js is not loaded');
+    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+
+    if (onProgress) onProgress('Decrypting PDF…');
+    const pdf = await pdfjsLib.getDocument({
+        data: new Uint8Array(arrayBuffer),
+        password: password || ''
+    }).promise.catch(err => {
+        if (err.name === 'PasswordException' || err.name === 'IncorrectPasswordException') {
+            throw new Error('Incorrect PDF password. Usually your PAN in lowercase (e.g. abcde1234f).');
+        }
+        throw new Error('Failed to open PDF: ' + err.message);
+    });
+
+    const textLines = [];
+    for (let p = 1; p <= pdf.numPages; p++) {
+        if (onProgress) onProgress(`Extracting text (page ${p}/${pdf.numPages})…`);
+        const page = await pdf.getPage(p);
+        const content = await page.getTextContent();
+
+        // Sort items top-to-bottom, left-to-right by Y/X coordinates
+        const items = content.items
+            .filter(i => i.str && i.str.trim())
+            .map(i => ({ str: i.str, x: i.transform[4], y: i.transform[5] }));
+        items.sort((a, b) => b.y - a.y || a.x - b.x);
+
+        let currentLine = '';
+        let lastY = null;
+        for (const item of items) {
+            if (lastY !== null && Math.abs(item.y - lastY) > 3) {
+                if (currentLine.trim()) textLines.push(currentLine.trim());
+                currentLine = item.str;
+            } else {
+                currentLine += (currentLine ? ' ' : '') + item.str;
+            }
+            lastY = item.y;
+        }
+        if (currentLine.trim()) textLines.push(currentLine.trim());
+    }
+    return textLines;
 }
 
 /* ── UPLOAD & INITIALIZATION ────────────────────────────────────────── */
@@ -235,15 +282,24 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (!res.ok) throw new Error(json.detail || 'Upload failed');
                 data = json.data;
             } else {
-                // Browser mode — use Pyodide + casparser
+                // 1. Extract text with pdf.js (handles password, decoding)
+                btnText.textContent = 'Extracting PDF text…';
+                const arrayBuffer = await fileInput.files[0].arrayBuffer();
+                const textLines = await extractTextFromPDF(
+                    arrayBuffer, passInput.value,
+                    (msg) => { btnText.textContent = msg; }
+                );
+                console.log(`Extracted ${textLines.length} text lines from PDF`);
+
+                // 2. If Pyodide isn't ready yet, wait
                 if (!pyodideReady) {
                     btnText.textContent = 'Waiting for Python runtime…';
-                    // Wait for Pyodide to finish loading
                     await pyodideInitPromise;
                 }
-                btnText.textContent = 'Analyzing PDF…';
-                const arrayBuffer = await fileInput.files[0].arrayBuffer();
-                data = await analyzeWithPyodide(arrayBuffer, passInput.value);
+
+                // 3. Send text lines to Python worker for parsing
+                btnText.textContent = 'Parsing portfolio data…';
+                data = await analyzeWithPyodide(textLines);
             }
 
             appData = data;

@@ -1,68 +1,39 @@
 /**
- * pyodide-worker.js — Web Worker that runs Pyodide + CAS analysis off the main thread.
+ * pyodide-worker.js — Web Worker: loads Pyodide (stdlib only, NO micropip installs)
+ *                     then runs our pure-Python CAS parser on text lines from pdf.js.
  *
  * Messages IN:
- *   { type: 'init' }                          — Load Pyodide & install packages
- *   { type: 'analyze', pdfBytes, password }   — Run analysis on PDF
+ *   { type: 'init' }
+ *   { type: 'analyze', textLines: string[] }
  *
  * Messages OUT:
- *   { type: 'progress', stage, message }      — Loading progress updates
- *   { type: 'ready' }                         — Pyodide is loaded and ready
- *   { type: 'result', data }                  — Analysis result
- *   { type: 'error', message }                — Error occurred
+ *   { type: 'progress', stage, message }
+ *   { type: 'ready' }
+ *   { type: 'result', data }
+ *   { type: 'error', message }
  */
 
-let pyodide = null;
-
-// Pyodide CDN
 const PYODIDE_CDN = 'https://cdn.jsdelivr.net/pyodide/v0.27.7/full/';
-
-// pyxirr WASM wheel URL (from GitHub releases)
-const PYXIRR_WHEEL = 'https://github.com/Anexen/pyxirr/releases/download/v0.10.6/pyxirr-0.10.6-cp312-cp312-pyodide_2024_0_wasm32.whl';
-
 importScripts(PYODIDE_CDN + 'pyodide.js');
 
-// ── Analyzer Python code (embedded) ────────────────────────────────────────
-// We'll fetch analyzer.py from the same origin
-let analyzerCode = null;
+let pyodide = null;
 
 async function initialize() {
     try {
         self.postMessage({ type: 'progress', stage: 1, message: 'Loading Python runtime…' });
 
-        pyodide = await loadPyodide({
-            indexURL: PYODIDE_CDN,
-        });
+        pyodide = await loadPyodide({ indexURL: PYODIDE_CDN });
 
-        self.postMessage({ type: 'progress', stage: 2, message: 'Installing packages…' });
+        self.postMessage({ type: 'progress', stage: 2, message: 'Loading analyzer…' });
 
-        // Install micropip
-        await pyodide.loadPackage('micropip');
-        const micropip = pyodide.pyimport('micropip');
-
-        // Install casparser (and its dependencies)
-        self.postMessage({ type: 'progress', stage: 3, message: 'Installing casparser…' });
-        await micropip.install('casparser');
-
-        // Install pyxirr WASM wheel
-        self.postMessage({ type: 'progress', stage: 4, message: 'Installing pyxirr…' });
-        try {
-            await micropip.install(PYXIRR_WHEEL);
-        } catch (e) {
-            console.warn('pyxirr WASM install failed, will use pure-Python XIRR fallback:', e.message);
-        }
-
-        // Fetch and load analyzer.py (co-located in frontend/)
-        self.postMessage({ type: 'progress', stage: 5, message: 'Loading analyzer…' });
-
+        // Fetch our custom analyzer.py (no packages needed — pure stdlib)
         const analyzerUrl = new URL('./analyzer.py', self.location.href).href;
         const resp = await fetch(analyzerUrl);
         if (!resp.ok) {
-            throw new Error(`Could not fetch analyzer.py (HTTP ${resp.status}). Make sure frontend/analyzer.py exists.`);
+            throw new Error(`Could not fetch analyzer.py (HTTP ${resp.status})`);
         }
-        analyzerCode = await resp.text();
+        const analyzerCode = await resp.text();
 
-        // Write analyzer.py to Pyodide's virtual filesystem
         pyodide.FS.writeFile('/home/pyodide/analyzer.py', analyzerCode);
         pyodide.runPython(`
 import sys
@@ -71,7 +42,7 @@ if '/home/pyodide' not in sys.path:
 import analyzer
 `);
 
-        self.postMessage({ type: 'progress', stage: 6, message: 'Ready!' });
+        self.postMessage({ type: 'progress', stage: 3, message: 'Ready!' });
         self.postMessage({ type: 'ready' });
 
     } catch (err) {
@@ -79,55 +50,30 @@ import analyzer
     }
 }
 
-
-async function analyzePDF(pdfBytes, password) {
+async function analyze(textLines) {
     if (!pyodide) {
         self.postMessage({ type: 'error', message: 'Pyodide not initialized' });
         return;
     }
-
     try {
-        // Write PDF bytes to Pyodide filesystem
-        const uint8 = new Uint8Array(pdfBytes);
-        pyodide.FS.writeFile('/home/pyodide/input.pdf', uint8);
-
-        // Run analysis
+        const linesJson = JSON.stringify(textLines);
         const resultJson = pyodide.runPython(`
 import json
-
-with open('/home/pyodide/input.pdf', 'rb') as f:
-    pdf_bytes = f.read()
-
-result = analyzer.analyze_cas(pdf_bytes, ${JSON.stringify(password)})
-json.dumps(result)
+result = analyzer.analyze_text_lines(${JSON.stringify(linesJson)})
+result
 `);
-
-        const result = JSON.parse(resultJson);
-
-        // Clean up temp file
-        try { pyodide.FS.unlink('/home/pyodide/input.pdf'); } catch (e) { }
-
-        self.postMessage({ type: 'result', data: result.data });
-
+        const data = JSON.parse(resultJson);
+        self.postMessage({ type: 'result', data });
     } catch (err) {
         self.postMessage({ type: 'error', message: 'Analysis failed: ' + err.message });
     }
 }
 
-
-// ── Message handler ─────────────────────────────────────────────────────────
-
 self.onmessage = async (e) => {
-    const { type, pdfBytes, password } = e.data;
-
+    const { type, textLines } = e.data;
     switch (type) {
-        case 'init':
-            await initialize();
-            break;
-        case 'analyze':
-            await analyzePDF(pdfBytes, password);
-            break;
-        default:
-            self.postMessage({ type: 'error', message: 'Unknown message type: ' + type });
+        case 'init': await initialize(); break;
+        case 'analyze': await analyze(textLines); break;
+        default: self.postMessage({ type: 'error', message: 'Unknown type: ' + type });
     }
 };
