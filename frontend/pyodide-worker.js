@@ -52,47 +52,24 @@ async function initialize() {
             console.warn('pyxirr WASM install failed, will use pure-Python XIRR fallback:', e.message);
         }
 
-        // Fetch and load analyzer.py
+        // Fetch and load analyzer.py (co-located in frontend/)
         self.postMessage({ type: 'progress', stage: 5, message: 'Loading analyzer…' });
 
-        // Try multiple URL patterns to find analyzer.py relative to the worker location
-        const workerUrl = self.location.href;
-        const candidateUrls = [
-            // 1. Parent directory of worker (e.g. /local-mf-analyzer/analyzer.py)
-            workerUrl.substring(0, workerUrl.lastIndexOf('/frontend/')) + '/analyzer.py',
-            // 2. Same directory (if copied into frontend/)
-            workerUrl.substring(0, workerUrl.lastIndexOf('/')) + '/analyzer.py',
-            // 3. Root path fallback
-            '/analyzer.py',
-            '../analyzer.py'
-        ];
-
-        for (const url of candidateUrls) {
-            try {
-                const resp = await fetch(url);
-                if (resp.ok) {
-                    analyzerCode = await resp.text();
-                    console.log('Successfully loaded analyzer.py from:', url);
-                    break;
-                }
-            } catch (e) {
-                // try next URL
-            }
+        const analyzerUrl = new URL('./analyzer.py', self.location.href).href;
+        const resp = await fetch(analyzerUrl);
+        if (!resp.ok) {
+            throw new Error(`Could not fetch analyzer.py (HTTP ${resp.status}). Make sure frontend/analyzer.py exists.`);
         }
+        analyzerCode = await resp.text();
 
-        if (analyzerCode) {
-            // Write analyzer.py to Pyodide's virtual filesystem
-            pyodide.FS.writeFile('/home/pyodide/analyzer.py', analyzerCode);
-            // Add to Python path
-            pyodide.runPython(`
+        // Write analyzer.py to Pyodide's virtual filesystem
+        pyodide.FS.writeFile('/home/pyodide/analyzer.py', analyzerCode);
+        pyodide.runPython(`
 import sys
 if '/home/pyodide' not in sys.path:
     sys.path.insert(0, '/home/pyodide')
 import analyzer
 `);
-        } else {
-            throw new Error('Could not load analyzer.py from any location');
-        }
 
         self.postMessage({ type: 'progress', stage: 6, message: 'Ready!' });
         self.postMessage({ type: 'ready' });

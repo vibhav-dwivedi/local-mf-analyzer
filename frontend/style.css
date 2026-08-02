@@ -1286,3 +1286,12 @@ body.modal-open {
 .btn-copy-error:hover {
     background: var(--border);
 }
+
+/* Inline Pyodide init status */
+.pyodide-status-inline {
+    font-size: 0.78rem;
+    color: var(--text-sec);
+    margin-top: 0.4rem;
+    min-height: 1.2em;
+    text-align: center;
+}

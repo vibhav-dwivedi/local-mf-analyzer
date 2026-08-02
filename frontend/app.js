@@ -80,29 +80,63 @@ function txnTypeClass(t) {
 let appData = null;
 let pyodideWorker = null;
 let pyodideReady = false;
+let pyodideInitPromise = null;
 let useLocalBackend = false; // true if running with FastAPI backend
 
 /* ── DETECT MODE ───────────────────────────────────────────────────── */
-// Only probe for local FastAPI backend if running on localhost / 127.0.0.1
 async function detectMode() {
     const isLocalhost = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
-    if (!isLocalhost) {
-        useLocalBackend = false;
-        return;
-    }
+    if (!isLocalhost) { useLocalBackend = false; return; }
     try {
         const res = await fetch('/api/upload', { method: 'OPTIONS' });
-        if (res.ok || res.status === 405 || res.status === 422) {
-            useLocalBackend = true;
-        }
+        if (res.ok || res.status === 405 || res.status === 422) useLocalBackend = true;
     } catch (e) {
         useLocalBackend = false;
     }
 }
 
+/* ── PYODIDE WORKER ─────────────────────────────────────────────────── */
+function startPyodideWorker(onStageUpdate) {
+    pyodideInitPromise = new Promise((resolve, reject) => {
+        pyodideWorker = new Worker('pyodide-worker.js');
+        const progressStages = { 1: 10, 2: 25, 3: 50, 4: 70, 5: 90, 6: 100 };
+
+        pyodideWorker.onmessage = (e) => {
+            const { type, stage, message } = e.data;
+            if (type === 'progress') {
+                if (onStageUpdate) onStageUpdate(progressStages[stage] || 0, message || '');
+            } else if (type === 'ready') {
+                pyodideReady = true;
+                resolve();
+            } else if (type === 'error') {
+                reject(new Error(message));
+            }
+        };
+        pyodideWorker.onerror = (err) => reject(new Error('Worker error: ' + err.message));
+        pyodideWorker.postMessage({ type: 'init' });
+    });
+    return pyodideInitPromise;
+}
+
+function analyzeWithPyodide(pdfArrayBuffer, password) {
+    return new Promise((resolve, reject) => {
+        const handler = (e) => {
+            const { type, data, message } = e.data;
+            if (type === 'result') {
+                pyodideWorker.removeEventListener('message', handler);
+                resolve(data);
+            } else if (type === 'error') {
+                pyodideWorker.removeEventListener('message', handler);
+                reject(new Error(message));
+            }
+        };
+        pyodideWorker.addEventListener('message', handler);
+        pyodideWorker.postMessage({ type: 'analyze', pdfBytes: pdfArrayBuffer, password });
+    });
+}
+
 /* ── UPLOAD & INITIALIZATION ────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', async () => {
-    const pyodideOverlay = document.getElementById('pyodide-loading');
     const uploadScreen = document.getElementById('upload-screen');
     const dashScreen = document.getElementById('dashboard-screen');
     const form = document.getElementById('upload-form');
@@ -115,9 +149,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     const btnLoader = document.getElementById('btn-loader');
     const errMsg = document.getElementById('upload-error');
     const resetBtn = document.getElementById('reset-btn');
+    const pyodideStatusEl = document.getElementById('pyodide-status');
 
-    // Check if local FastAPI backend is available (for local dev)
+    // Show upload form immediately — no blocking
     await detectMode();
+
+    if (!useLocalBackend) {
+        // Begin Pyodide init silently in background
+        startPyodideWorker((pct, msg) => {
+            if (pyodideStatusEl) {
+                pyodideStatusEl.textContent = pyodideReady ? '' : `⏳ Loading Python runtime… ${msg}`;
+                if (pyodideReady) pyodideStatusEl.textContent = '';
+            }
+        }).then(() => {
+            if (pyodideStatusEl) pyodideStatusEl.textContent = '';
+        }).catch((err) => {
+            console.error('Pyodide init failed:', err);
+            if (pyodideStatusEl) pyodideStatusEl.textContent = '⚠ Python runtime failed to load. Try refreshing.';
+        });
+    }
 
     // Check for previous session
     try {
@@ -185,15 +235,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (!res.ok) throw new Error(json.detail || 'Upload failed');
                 data = json.data;
             } else {
-                // Use Pure JS Parser (pdf.js)
+                // Browser mode — use Pyodide + casparser
+                if (!pyodideReady) {
+                    btnText.textContent = 'Waiting for Python runtime…';
+                    // Wait for Pyodide to finish loading
+                    await pyodideInitPromise;
+                }
+                btnText.textContent = 'Analyzing PDF…';
                 const arrayBuffer = await fileInput.files[0].arrayBuffer();
-                data = await window.MFCasParser.parsePDF(
-                    arrayBuffer,
-                    passInput.value,
-                    (stage, statusMsg) => {
-                        btnText.textContent = statusMsg;
-                    }
-                );
+                data = await analyzeWithPyodide(arrayBuffer, passInput.value);
             }
 
             appData = data;
