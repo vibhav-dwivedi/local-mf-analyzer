@@ -1,13 +1,23 @@
 # 📊 Local MF Analyzer
 
-A **privacy-first Mutual Fund Portfolio Analyzer** that parses your KFintech / myCAMS Consolidated Account Statement (CAS) PDF and gives you a rich, interactive dashboard — all processed **locally in your browser**. Nothing leaves your device.
+A **privacy-first Mutual Fund Portfolio Analyzer** that parses your KFintech / myCAMS Consolidated Account Statement (CAS) PDF and gives you a rich, interactive dashboard — all processed **locally on your machine**. Nothing leaves your device.
 
-[![Try it Online](https://img.shields.io/badge/🚀_Try_it_Online-GitHub_Pages-6366f1?style=for-the-badge)](https://vibhav-dwivedi.github.io/local-mf-analyzer/frontend/)
+[![Run Locally](https://img.shields.io/badge/🖥️_Run_Locally-FastAPI-009688?style=for-the-badge)](#option-2-run-locally-recommended)
+[![GitHub Pages](https://img.shields.io/badge/⚠️_GitHub_Pages-Work_In_Progress-f59e0b?style=for-the-badge)](https://vibhav-dwivedi.github.io/local-mf-analyzer/frontend/)
 
 ![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white)
-![Pyodide](https://img.shields.io/badge/Pyodide-In_Browser-f59e0b?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
+
+---
+
+> **⚠️ GitHub Pages (Browser-Only Mode) — WORK IN PROGRESS**
+>
+> The GitHub Pages hosted version (`https://vibhav-dwivedi.github.io/...`) is **not yet fully functional**.
+> We are building a hybrid browser-only architecture (pdf.js + Pyodide Python stdlib parser) to eliminate
+> `casparser`/micropip installation failures in the WASM environment. This is pending completion.
+>
+> **For a fully working experience, run locally using Option 2 below.**
 
 ---
 
@@ -32,61 +42,58 @@ A **privacy-first Mutual Fund Portfolio Analyzer** that parses your KFintech / m
 - 🩺 **Portfolio Health Check** — Automated checks for diversification, concentration, tenure, and returns
 
 ### Privacy & Security
-- 🔒 **100% In-Browser Processing** — Python runs via WebAssembly (Pyodide), no server needed
+- 🔒 **All Processing On Your Machine** — Your PDF is read locally, never uploaded anywhere
 - 🚫 **No External API Calls** — All parsing and analysis happens on your machine
-- 🗑️ **No Data Sent Anywhere** — Your PDF never leaves your browser
 - 💾 **Optional Local Storage** — Save analysis snapshots in your browser (IndexedDB) for tracking changes over time
 
 ---
 
-## � How to Use
+## 🚀 How to Use
 
-### Option 1: Use Online (Recommended)
-Just visit the hosted version — **no installation needed**:
-
-👉 **[https://vibhav-dwivedi.github.io/local-mf-analyzer/frontend/](https://vibhav-dwivedi.github.io/local-mf-analyzer/frontend/)**
-
-1. Wait for the Python runtime to load in your browser (~5 seconds)
-2. Upload your **KFintech or myCAMS CAS PDF** statement
-3. Enter the PDF password (usually your PAN in lowercase, e.g., `aabcp1234a`)
-4. Explore your portfolio dashboard!
-
-> Your data never leaves your browser. The Python runtime (Pyodide) runs entirely in WebAssembly.
-
-### Option 2: Run Locally (For Developers)
+### Option 2: Run Locally (Recommended — Fully Working)
 
 ```bash
 # Clone the repo
 git clone https://github.com/vibhav-dwivedi/local-mf-analyzer.git
 cd local-mf-analyzer
 
-# Create a virtual environment
+# Create & activate a virtual environment
+cd backend
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -r ../requirements.txt
 
 # Start the server
-uvicorn backend.main:app --reload --port 8000
+uvicorn main:app --reload --port 8000
 ```
 
-Open **http://localhost:8000** — the app auto-detects the local backend and uses it directly (no Pyodide needed).
+Open **[http://localhost:8000](http://localhost:8000)** in your browser.
+
+1. Upload your **KFintech or myCAMS CAS PDF** statement
+2. Enter the PDF password (usually your PAN in lowercase, e.g., `aabcp1234a`)
+3. Explore your portfolio dashboard!
+
+### Option 1: Use Online (Work In Progress)
+
+> ⚠️ GitHub Pages browser-only mode is currently under development. See note above.
+
+👉 **[https://vibhav-dwivedi.github.io/local-mf-analyzer/frontend/](https://vibhav-dwivedi.github.io/local-mf-analyzer/frontend/)**
 
 ---
 
 ## 🛠️ Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
-| **Browser Runtime** | [Pyodide](https://pyodide.org/) (Python in WebAssembly) |
-| **PDF Parsing** | [casparser](https://github.com/codelif/casparser) |
+|-------|------------|
+| **PDF Parsing** | [casparser](https://github.com/codelif/casparser) (local) / pdf.js + Python stdlib (browser — WIP) |
 | **XIRR Calculation** | [pyxirr](https://github.com/Anexen/pyxirr) + pure-Python fallback |
 | **Frontend** | Vanilla HTML, CSS, JavaScript |
 | **Charts** | Chart.js |
 | **Persistence** | IndexedDB (browser storage) |
-| **Local Backend** | Python, FastAPI, Uvicorn (optional, for dev) |
-| **Hosting** | GitHub Pages (static files) |
+| **Local Backend** | Python 3.9+, FastAPI, Uvicorn |
+| **Hosting** | GitHub Pages (browser-only mode — WIP) |
 
 ---
 
@@ -94,28 +101,41 @@ Open **http://localhost:8000** — the app auto-detects the local backend and us
 
 ```
 local-mf-analyzer/
-├── analyzer.py                # Core analysis engine (shared by Pyodide & backend)
+├── analyzer.py                  # Root analyzer (used by FastAPI backend)
 ├── backend/
-│   └── main.py                # FastAPI server (optional, for local dev)
+│   └── main.py                  # FastAPI server (for local dev)
 ├── frontend/
-│   ├── index.html             # Main HTML (loading → upload → dashboard)
-│   ├── app.js                 # Dashboard rendering, dual-mode (Pyodide / backend)
-│   ├── pyodide-worker.js      # Web Worker for in-browser Python execution
-│   ├── storage.js             # IndexedDB wrapper for analysis snapshots
-│   └── style.css              # Dark/light theme styles
-├── diagnostic.py              # CLI tool for debugging CAS PDF parsing
-├── requirements.txt           # Python dependencies (for local dev)
+│   ├── index.html               # Main HTML (upload → dashboard)
+│   ├── app.js                   # Dashboard rendering + dual-mode routing
+│   ├── pyodide-worker.js        # Web Worker: Pyodide Python runtime (browser mode — WIP)
+│   ├── analyzer.py              # Pure-stdlib Python CAS parser for browser mode (WIP)
+│   ├── storage.js               # IndexedDB wrapper for analysis snapshots
+│   └── style.css                # Dark/light theme styles
+├── diagnostic.py                # CLI tool for debugging CAS PDF parsing
+├── requirements.txt             # Python dependencies
 ├── .github/workflows/
-│   └── deploy.yml             # GitHub Actions → Pages deployment
-├── LICENSE                    # MIT License
+│   └── deploy.yml               # GitHub Actions → Pages deployment
+├── LICENSE
 └── README.md
 ```
 
 ---
 
-## 🎨 Themes
+## ⚠️ Known Issues / Pending Work
 
-The app supports both **Dark** and **Light** themes. Toggle using the 🌙/☀️ button. Your preference is saved in `localStorage`.
+### GitHub Pages Browser-Only Mode (PENDING)
+The app is designed to eventually work **without any server** via GitHub Pages. The architecture planned is:
+
+1. **pdf.js** (JavaScript) — decrypts and extracts text from the CAS PDF in the browser
+2. **Pyodide** (Python in WebAssembly, stdlib only) — parses CAS text using regex and computes XIRR
+3. **No package installs** — `casparser`/`micropip` wheel installs fail in the Pyodide WASM environment
+
+Current status:
+- [x] pdf.js text extraction works
+- [x] Pyodide loads (stdlib only, no packages)
+- [x] Pure-stdlib Python CAS parser written (`frontend/analyzer.py`)
+- [ ] End-to-end parsing accuracy needs validation against real CAS statements in the browser
+- [ ] GitHub Pages deployment of browser-only mode not yet validated
 
 ---
 
@@ -126,12 +146,6 @@ The app supports both **Dark** and **Light** themes. Toggle using the 🌙/☀�
 - XIRR uses actual transaction dates for accurate annualized returns
 - Fund categories and AMC names are auto-detected via pattern matching
 - Analysis snapshots are saved in your browser's IndexedDB — revisit to track changes
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Feel free to open issues or submit pull requests.
 
 ---
 

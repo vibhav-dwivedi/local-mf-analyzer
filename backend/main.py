@@ -25,6 +25,11 @@ app.add_middleware(
 )
 
 
+@app.get("/api/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.post("/api/upload")
 async def upload_cas(
     file: UploadFile = File(...),

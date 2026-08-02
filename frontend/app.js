@@ -88,8 +88,10 @@ async function detectMode() {
     const isLocalhost = ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
     if (!isLocalhost) { useLocalBackend = false; return; }
     try {
-        const res = await fetch('/api/upload', { method: 'OPTIONS' });
-        if (res.ok || res.status === 405 || res.status === 422) useLocalBackend = true;
+        // Use GET /api/health — FastAPI returns 200, plain http.server returns 404
+        // This avoids the 501 error from Python http.server for OPTIONS
+        const res = await fetch('/api/health', { method: 'GET' });
+        if (res.ok) useLocalBackend = true;
     } catch (e) {
         useLocalBackend = false;
     }
